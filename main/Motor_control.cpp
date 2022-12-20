@@ -3,7 +3,7 @@
  *	Motor Control
  *
  *	PWM	 -	Motor throttle control
- *	Gyro -	MPU6050
+ *	Gyro	 -	MPU6050
  *	PID	 -	Stablization control, steering	
  *
  */
@@ -38,11 +38,11 @@ int target_speed[4];
 /*
  * Globals MPU6050
  */
-Quaternion q;				// [w, x, y, z]         quaternion container
+Quaternion q;			// [w, x, y, z]         quaternion container
 VectorFloat gravity;		// [x, y, z]            gravity vector
-float ypr[3];				// [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
+float ypr[3];			// [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
 uint16_t packetSize = 42;	// expected DMP packet size (default is 42 bytes)
-uint16_t fifoCount;			// count of all bytes currently in FIFO
+uint16_t fifoCount;		// count of all bytes currently in FIFO
 uint8_t fifoBuffer[64];		// FIFO storage buffer
 uint8_t mpuIntStatus;		// holds actual interrupt status byte from MPU
 
@@ -152,10 +152,10 @@ void motor_control_stabilization (int* curr_speed, int* act_speed, double roll_d
 	/*
 	 *		(roll left/right)	(pitch up/down)		(yaw turn left/right)
 	 *		 (-)	(+)		    (+)    (+)           (-)    (+) 
-	 *		   \   /              \   /                \   /
-	 *			 O                  O                    O
-	 *         /   \              /   \                /   \
-	 *      (-)     (+)        (-)     (-)          (+)     (-)
+	 *		   \   /              	      \   /                \   /
+	 *	             O                  	O                    O
+	 *         	   /   \              	      /   \                /   \
+	 *      	(-)     (+)        	   (-)     (-)          (+)     (-)
 	 */
 	act_speed[0] = (int) curr_speed[0] - (roll_diff) + (pitch_diff) - (yaw_diff); 	// FL
 	act_speed[1] = (int) curr_speed[1] + (roll_diff) + (pitch_diff) + (yaw_diff);	// FR

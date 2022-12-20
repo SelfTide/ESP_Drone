@@ -36,7 +36,7 @@ ledc_channel_config_t ledc_channel[4];
 int target_speed[4];
 
 /*
- * Globals MPU6050
+ * 	Globals MPU6050
  */
 Quaternion q;			// [w, x, y, z]         quaternion container
 VectorFloat gravity;		// [x, y, z]            gravity vector
@@ -62,7 +62,8 @@ PID roll_PID(&pitch_input, &pitch_output, &pitch_setpoint, consKp, consKi, consK
 PID pitch_PID(&roll_input, &roll_output, &roll_setpoint, consKp, consKi, consKd, DIRECT);
 PID yaw_PID(&yaw_input, &yaw_output, &yaw_setpoint, consKp, consKi, consKd, DIRECT);
 
-void motor_control_init(void *ignore) {
+void motor_control_init(void *ignore)
+{
 	
 	// initalize MPU6050
 	i2c_config_t conf;
@@ -150,7 +151,7 @@ void set_motors_speed (int* Speed)
 void motor_control_stabilization (int* curr_speed, int* act_speed, double roll_diff, double pitch_diff, double yaw_diff) 
 {
 	/*
-	 *		(roll left/right)	(pitch up/down)		(yaw turn left/right)
+	 *		(roll left/right)	   (pitch up/down)	(yaw turn left/right)
 	 *		 (-)	(+)		    (+)    (+)           (-)    (+) 
 	 *		   \   /              	      \   /                \   /
 	 *	             O                  	O                    O
@@ -194,19 +195,19 @@ void run_motor_control(void*)
 		// get current FIFO count
 		fifoCount = mpu.getFIFOCount();
 
-	    if ((mpuIntStatus & 0x10) || fifoCount == 1024) 
-		{
-	        // reset so we can continue cleanly
-	        mpu.resetFIFO();
+	   	if ((mpuIntStatus & 0x10) || fifoCount == 1024) 
+	    	{
+	        	// reset so we can continue cleanly
+	        	mpu.resetFIFO();
 
-	      // otherwise, check for DMP data ready interrupt frequently)
-	    } else if (mpuIntStatus & 0x02) {
-	        // wait for correct available data length, should be a VERY short wait
-	        while (fifoCount < packetSize) fifoCount = mpu.getFIFOCount();
+	      	// otherwise, check for DMP data ready interrupt frequently)
+	    	} else if (mpuIntStatus & 0x02) {
+	        	// wait for correct available data length, should be a VERY short wait
+	        	while (fifoCount < packetSize) fifoCount = mpu.getFIFOCount();
 
-	        // read a packet from FIFO
+	        	// read a packet from FIFO
 
-	        mpu.getFIFOBytes(fifoBuffer, packetSize);
+	        	mpu.getFIFOBytes(fifoBuffer, packetSize);
 	 		mpu.dmpGetQuaternion(&q, fifoBuffer);
 			mpu.dmpGetGravity(&gravity, &q);
 			mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);

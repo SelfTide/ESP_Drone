@@ -20,8 +20,8 @@
 extern "C" {
 #endif
 
-	extern void motor_control_init(void*);
-	extern void run_motor_control(void*);
+	extern void motor_control_init(void);
+	extern void motor_control_run(void);
 	
 #ifdef __cplusplus
 }

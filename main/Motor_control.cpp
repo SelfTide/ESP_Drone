@@ -3,7 +3,7 @@
  *	Motor Control
  *
  *	PWM	 -	Motor throttle control
- *	Gyro	 -	MPU6050
+ *	Gyro -	MPU6050
  *	PID	 -	Stablization control, steering	
  *
  */
@@ -18,7 +18,10 @@
 #include "sdkconfig.h"
 #include "PID_v2.h"
 #include "Motor_control.h"
+#include "common.h"
 
+
+extern Control_data controller;
 
 /*
  *	Globals PWM LEDC
@@ -38,13 +41,15 @@ int target_speed[4];
 /*
  * 	Globals MPU6050
  */
-Quaternion q;			// [w, x, y, z]         quaternion container
+Quaternion q;				// [w, x, y, z]         quaternion container
 VectorFloat gravity;		// [x, y, z]            gravity vector
-float ypr[3];			// [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
+float ypr[3];				// [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
 uint16_t packetSize = 42;	// expected DMP packet size (default is 42 bytes)
-uint16_t fifoCount;		// count of all bytes currently in FIFO
+uint16_t fifoCount;			// count of all bytes currently in FIFO
 uint8_t fifoBuffer[64];		// FIFO storage buffer
 uint8_t mpuIntStatus;		// holds actual interrupt status byte from MPU
+
+MPU6050 mpu;
 
 /*
  *	Globals PID
@@ -62,8 +67,7 @@ PID roll_PID(&pitch_input, &pitch_output, &pitch_setpoint, consKp, consKi, consK
 PID pitch_PID(&roll_input, &roll_output, &roll_setpoint, consKp, consKi, consKd, DIRECT);
 PID yaw_PID(&yaw_input, &yaw_output, &yaw_setpoint, consKp, consKi, consKd, DIRECT);
 
-void motor_control_init(void *ignore)
-{
+void motor_control_init(void) {
 	
 	// initalize MPU6050
 	i2c_config_t conf;
@@ -76,6 +80,20 @@ void motor_control_init(void *ignore)
 	
 	ESP_ERROR_CHECK(i2c_param_config(I2C_NUM_0, &conf));
 	ESP_ERROR_CHECK(i2c_driver_install(I2C_NUM_0, I2C_MODE_MASTER, 0, 0, 0));
+
+	mpu = MPU6050();
+	mpu.initialize();
+	mpu.dmpInitialize();
+
+	// This needs to be setup individually
+	mpu.setXGyroOffset(-22);
+	mpu.setYGyroOffset(48);
+	mpu.setZGyroOffset(68);
+	mpu.setZAccelOffset(1760); // 1688 factory default for my test chip
+	mpu.CalibrateAccel(6);
+	mpu.CalibrateGyro(6);
+
+	mpu.setDMPEnabled(true);
 	
 	// initalize PWM LEDC
 	ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
@@ -129,11 +147,9 @@ void motor_control_init(void *ignore)
 	roll_PID.SetOutputLimits(-20, 20);
 	pitch_PID.SetOutputLimits(-20, 20);
 	yaw_PID.SetOutputLimits(-20, 20);
-	
-	vTaskDelete(NULL);
 }
 
-void set_motors_speed (int* Speed) 
+void set_motors_speed (int *Speed) 
 {
 	ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, Speed[0]));
 	ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0));
@@ -148,7 +164,7 @@ void set_motors_speed (int* Speed)
 	ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_3));
 }
 
-void motor_control_stabilization (int* curr_speed, int* act_speed, double roll_diff, double pitch_diff, double yaw_diff) 
+void motor_control_stabilization (int *curr_speed, int *act_speed, double roll_diff, double pitch_diff, double yaw_diff) 
 {
 	/*
 	 *		(roll left/right)	   (pitch up/down)	(yaw turn left/right)
@@ -170,89 +186,78 @@ void motor_control_stabilization (int* curr_speed, int* act_speed, double roll_d
 	}
 }
 
-void run_motor_control(void*)
-{
+int current_time, previous_time;
 
-	MPU6050 mpu = MPU6050();
-	mpu.initialize();
-	mpu.dmpInitialize();
-
-	// This needs to be setup individually
-	mpu.setXGyroOffset(-22);
-	mpu.setYGyroOffset(48);
-	mpu.setZGyroOffset(68);
-	mpu.setZAccelOffset(1760); // 1688 factory default for my test chip
-	mpu.CalibrateAccel(6);
-	mpu.CalibrateGyro(6);
-
-	mpu.setDMPEnabled(true);
+void motor_control_run(void)
+{	
+	mpuIntStatus = mpu.getIntStatus();
 	
-	while(1)
+	// get current FIFO count
+	fifoCount = mpu.getFIFOCount();
+
+	if ((mpuIntStatus & 0x10) || fifoCount == 1024) 
 	{
-		mpuIntStatus = mpu.getIntStatus();
+		// reset so we can continue cleanly
+		mpu.resetFIFO();
+
+	  // otherwise, check for DMP data ready interrupt frequently)
+	} else if (mpuIntStatus & 0x02) {
+		// wait for correct available data length, should be a VERY short wait
+		while (fifoCount < packetSize) fifoCount = mpu.getFIFOCount();
+
+		// read a packet from FIFO
+		mpu.getFIFOBytes(fifoBuffer, packetSize);
+		mpu.dmpGetQuaternion(&q, fifoBuffer);
+		mpu.dmpGetGravity(&gravity, &q);
+		mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+	}
+	
+	// PID Cal while throttle is at 0
+	if (target_speed[0] == 0)
+	{
+		// CALIBRATING...
+		ypr_cal[0] = ypr[0] * 180 / M_PI;
+		ypr_cal[1] = ypr[1] * 180 / M_PI;
+		ypr_cal[2] = ypr[2] * 180 / M_PI;
+	}
+	
+	roll_input = ypr[2] * 180 / M_PI - ypr_cal[2];
+	pitch_input = ypr[1] * 180 / M_PI - ypr_cal[1];
+	yaw_input = ypr[1] * 180 / M_PI - ypr_cal[1];
+	
+	roll_setpoint = controller.roll;
+	pitch_setpoint = controller.pitch;
+	yaw_setpoint = controller.yaw;
+	
+	roll_PID.Compute();
+	pitch_PID.Compute();
+	yaw_PID.Compute();
+	
+	for (int i = 0; i < 4; i++) 
+		target_speed[i] = controller.throttle;
+	
+	set_motors_speed(target_speed);
+	
+	int act_speed[4];
+	motor_control_stabilization(target_speed, act_speed, roll_output, pitch_output, yaw_output);
+/*
+	Leaving this in for debug
+
+	current_time = esp_timer_get_time();
+	// limit diag display to only print once every second
+	if(((current_time - previous_time)/1000) > 1000)
+	{
 		printf("MPU int status: %d\n", mpuIntStatus);
-		
-		// get current FIFO count
-		fifoCount = mpu.getFIFOCount();
-
-	   	if ((mpuIntStatus & 0x10) || fifoCount == 1024) 
-	    	{
-	        	// reset so we can continue cleanly
-	        	mpu.resetFIFO();
-
-	      	// otherwise, check for DMP data ready interrupt frequently)
-	    	} else if (mpuIntStatus & 0x02) {
-	        	// wait for correct available data length, should be a VERY short wait
-	        	while (fifoCount < packetSize) fifoCount = mpu.getFIFOCount();
-
-	        	// read a packet from FIFO
-
-	        	mpu.getFIFOBytes(fifoBuffer, packetSize);
-	 		mpu.dmpGetQuaternion(&q, fifoBuffer);
-			mpu.dmpGetGravity(&gravity, &q);
-			mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
-			printf("YAW: %3.1f, ", ypr[0] * 180 / M_PI);
-			printf("PITCH: %3.1f, ", ypr[1] * 180 / M_PI);
-			printf("ROLL: %3.1f\n", ypr[2] * 180 / M_PI);
-		}
-		
-		// PID Cal while throttle is at 0
-		if (target_speed[0] == 0)
-		{
-			ESP_LOGI("PID", "CALIBRATING...");
-			ypr_cal[0] = ypr[0] * 180 / M_PI;
-			ypr_cal[1] = ypr[1] * 180 / M_PI;
-			ypr_cal[2] = ypr[2] * 180 / M_PI;
-		}
-		
-		roll_input = ypr[2] * 180 / M_PI - ypr_cal[2];
-		pitch_input = ypr[1] * 180 / M_PI - ypr_cal[1];
-		yaw_input = ypr[1] * 180 / M_PI - ypr_cal[1];
-		
-		roll_PID.Compute();
-		pitch_PID.Compute();
-		yaw_PID.Compute();
-		
-		if(target_speed[0] == 250)
-		{
-			for (int i = 0; i < 4; i++) 
-				target_speed[i] = 0;
-		}
-		
-		for (int i = 0; i < 4; i++) 
-			target_speed[i] += 10;
-		
-		set_motors_speed(target_speed);
-		
-		int act_speed[4];
-		motor_control_stabilization(target_speed, act_speed, roll_output, pitch_output, yaw_output);
-		
+		printf("Time: %d\n", (current_time - previous_time));
+		printf("YAW: %3.1f, ", ypr[0] * 180 / M_PI);
+		printf("PITCH: %3.1f, ", ypr[1] * 180 / M_PI);
+		printf("ROLL: %3.1f\n", ypr[2] * 180 / M_PI);
+	
 		printf("Current Speed: mot[0] = %d, mot[1] = %d, mot[2] = %d, mot[3] = %d\n", act_speed[0], act_speed[1], act_speed[2], act_speed[3]);
 		printf("Current PID values: Roll = %f, Pitch = %f, Yaw = %f\n", roll_output, pitch_output, yaw_output);
 		
-		vTaskDelay(pdMS_TO_TICKS(50));
+		previous_time = current_time;
 	}
-
-	vTaskDelete(NULL);
+*/
 }
 
